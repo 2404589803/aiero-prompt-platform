@@ -11,8 +11,7 @@
 -- 现在用 FOR UPDATE SKIP LOCKED 领取，多 worker 甚至多容器都不会抢到同一张卡，
 -- 容器被重调度也不会丢进度。
 --
--- 本迁移只在测试库（project ref zoqelpfhurwehlvypryl）执行，独立 schema，
--- 不触碰 miniapp / admin 现有对象。
+-- 本迁移只在测试库执行，独立 schema，不触碰 miniapp / admin 现有对象。
 
 BEGIN;
 

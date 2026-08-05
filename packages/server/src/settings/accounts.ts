@@ -173,6 +173,12 @@ export async function recordLoginResult(
   );
 }
 
+/** 随便借一个可用账号，用于向风月拉模型清单这类只读的探查。 */
+export async function firstEnabledCredential(): Promise<AccountCredential | null> {
+  const credentials = await listEnabledCredentials();
+  return credentials[0] ?? null;
+}
+
 /** 取单个账号的凭据，登录体检用。 */
 export async function getCredential(id: string): Promise<AccountCredential | null> {
   const row = await queryOne<Pick<AccountRow, 'id' | 'email' | 'password_cipher'>>(

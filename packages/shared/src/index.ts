@@ -49,6 +49,20 @@ export interface ModelRef {
   name: string;
 }
 
+/**
+ * 风月模型清单里的一项，顺序就是抽取时逐个尝试的顺序。
+ *
+ * 排在前面的先试：先是代码里写死的优先模型，再是风月标了推荐的，最后按成功率降序。
+ */
+export interface AvailableModel extends ModelRef {
+  /** 风月标记的推荐模型。 */
+  recommended: boolean;
+  /** 风月给的成功率原值，没给时为 null。 */
+  successRate: number | null;
+  /** 命中了代码里的优先模型（provider 与模型名都对上）。 */
+  priority: boolean;
+}
+
 export const DEFAULT_JOB_PARAMS: JobParams = {
   workers: 3,
   listLimit: 200,

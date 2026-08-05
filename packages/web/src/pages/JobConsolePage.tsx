@@ -26,6 +26,7 @@ import {
   type Job,
   type JobKind,
   type JobParams,
+  type ModelRef,
 } from '@aiero/shared';
 import { api } from '../lib/api';
 import { JobLogViewer } from '../components/JobLogViewer';
@@ -61,7 +62,7 @@ const STATUS_LABEL: Record<Job['status'], string> = {
 export function JobConsolePage() {
   const { message } = AntApp.useApp();
   const queryClient = useQueryClient();
-  const [form] = Form.useForm<JobParams & { kind: JobKind }>();
+  const [form] = Form.useForm<JobFormValues>();
 
   const activeJob = useQuery({
     queryKey: ['activeJob'],
@@ -90,14 +91,29 @@ export function JobConsolePage() {
     [jailbreakPrompts.data]
   );
 
+  // 模型清单要借账号登录风月才能拿到，所以只在有人真去点模型下拉时才拉。
+  const [modelsWanted, setModelsWanted] = useState(false);
+  const models = useQuery({
+    queryKey: ['models'],
+    queryFn: api.models,
+    enabled: modelsWanted,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
   const [starting, setStarting] = useState(false);
   // 历史任务的日志放抽屉里看。任务跑完或启动就失败时，「当前任务」那张卡会消失，
   // 过程日志得有个事后能翻回来的地方。
   const [logJob, setLogJob] = useState<Job | null>(null);
 
   const startJob = useMutation({
-    mutationFn: async (values: JobParams & { kind: JobKind }) => {
-      const { kind, ...params } = values;
+    mutationFn: async (values: JobFormValues) => {
+      const { kind, modelKeys, ...rest } = values;
+      // 表单里模型是一串 "provider/模型名"，留空表示交给后端自动拉全量清单。
+      const params: JobParams = {
+        ...rest,
+        models: modelKeys.length > 0 ? modelKeys.map(parseModelKey) : 'auto',
+      };
       return api.startJob(kind, params);
     },
     onSuccess: () => {
@@ -195,10 +211,13 @@ export function JobConsolePage() {
               {running.stats.appsDiscovered}
             </Descriptions.Item>
             <Descriptions.Item label="并发数">{running.params.workers}</Descriptions.Item>
-            <Descriptions.Item label="越狱提示词" span={2}>
+            <Descriptions.Item label="越狱提示词">
               {running.params.jailbreakVersions.length > 0
                 ? running.params.jailbreakVersions.join(' / ')
                 : '全部启用的'}
+            </Descriptions.Item>
+            <Descriptions.Item label="模型">
+              {describeModels(running.params.models)}
             </Descriptions.Item>
           </Descriptions>
 
@@ -214,12 +233,12 @@ export function JobConsolePage() {
             showIcon
             style={{ marginBottom: 16 }}
             message="同一时刻只允许一个任务运行"
-            description="抽取靠的是站点账号，并发开太大会触发限流甚至封号。默认三个并发是实测下来比较稳的值。"
+            description="抽取靠的是风月账号，并发开太大会触发限流甚至封号。默认三个并发是实测下来比较稳的值。"
           />
           <Form
             form={form}
             layout="inline"
-            initialValues={{ kind: 'full', ...DEFAULT_JOB_PARAMS }}
+            initialValues={{ kind: 'full', ...DEFAULT_JOB_PARAMS, modelKeys: [] }}
             onFinish={(values) => {
               setStarting(true);
               startJob.mutate(values);
@@ -240,6 +259,9 @@ export function JobConsolePage() {
             <Form.Item name="listDelay" label="翻页间隔（秒）">
               <InputNumber min={0.2} max={60} step={0.5} />
             </Form.Item>
+            <Form.Item name="listLimit" label="每页条数">
+              <InputNumber min={10} max={500} step={10} />
+            </Form.Item>
             <Form.Item name="maxPages" label="最多翻页">
               <InputNumber min={1} max={100000} />
             </Form.Item>
@@ -259,6 +281,36 @@ export function JobConsolePage() {
                   value: prompt.name,
                 }))}
                 style={{ minWidth: 200 }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="modelKeys"
+              label="模型"
+              style={{ minWidth: 340 }}
+              extra="留空＝启动时拉取风月全部可用模型，按优先级排序逐个试"
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                placeholder="自动（全部可用模型）"
+                loading={models.isFetching}
+                // 展开时才去拉：拉一次要借账号登录风月，多数人开表单只是想跑默认参数。
+                onDropdownVisibleChange={(open) => {
+                  if (open) setModelsWanted(true);
+                }}
+                notFoundContent={
+                  models.isFetching
+                    ? '正在向风月拉取…'
+                    : models.isError
+                      ? `拉取失败：${(models.error as Error).message}`
+                      : '没有可选模型'
+                }
+                options={(models.data ?? []).map((item) => ({
+                  label: `${item.provider}/${item.name}${item.priority ? '（优先）' : item.recommended ? '（推荐）' : ''}`,
+                  value: `${item.provider}/${item.name}`,
+                }))}
+                style={{ minWidth: 240 }}
               />
             </Form.Item>
             <Form.Item>
@@ -361,6 +413,29 @@ export function JobConsolePage() {
       </Drawer>
     </Space>
   );
+}
+
+/**
+ * 表单里的模型是一串 "provider/模型名"，提交时才转成 ModelRef。
+ * 模型留空等于 'auto'，两种取值在表单控件里表达不了，所以单开一个字段。
+ */
+type JobFormValues = Omit<JobParams, 'models'> & { kind: JobKind; modelKeys: string[] };
+
+function parseModelKey(key: string): ModelRef {
+  const at = key.indexOf('/');
+  // provider 不含斜杠，模型名可能含，所以只按第一个斜杠切。
+  return at < 0
+    ? { provider: '', name: key }
+    : { provider: key.slice(0, at), name: key.slice(at + 1) };
+}
+
+function describeModels(models: JobParams['models']): string {
+  if (models === 'auto') return '自动（风月全部可用）';
+  if (models.length === 0) return '—';
+  const names = models.map((item) => `${item.provider}/${item.name}`);
+  return names.length <= 3
+    ? names.join('、')
+    : `${names.slice(0, 3).join('、')} 等 ${names.length} 个`;
 }
 
 function objectToOptions(source: Record<string, string>) {

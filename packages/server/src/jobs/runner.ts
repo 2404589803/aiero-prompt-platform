@@ -7,7 +7,9 @@ import {
   type ModelRef,
 } from '@aiero/shared';
 import { Account, ScraperSession, fetchListPage, jitteredDelay, sleep } from '../scraper/client.js';
+import { PRIORITY_MODELS } from '../scraper/constants.js';
 import { extractOne } from '../scraper/extract.js';
+import type { ExtractOutcome, ExtractTarget } from '../scraper/extract.js';
 import * as accountStore from '../settings/accounts.js';
 import * as promptStore from '../settings/prompts.js';
 import type { PromptRef } from '../settings/prompts.js';
@@ -17,6 +19,10 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const QUEUE_POLL_MS = 2_000;
 /** 队列空转这么多轮且列表已同步完，就认为没活可干了。 */
 const IDLE_ROUNDS_BEFORE_EXIT = 5;
+/** 连续这么多页空结果就认为翻到底。站点偶尔会在中间返回一页空数据，只看一页会提前收工。 */
+const EMPTY_PAGE_STREAK = 3;
+/** 入库数量低于站点报告总数的这个比例，就提示列表可能没抓全。 */
+const LIST_COVERAGE_WARN = 0.95;
 
 interface RunState {
   jobId: string;
@@ -114,7 +120,7 @@ class JobRunner {
     if (!state) return;
 
     await repo.markJobRunning(state.jobId);
-    await this.log('info', `任务开始：${kind}`);
+    await this.log('info', `任务开始：${KIND_LABEL[kind]}｜${describeParams(kind, params)}`);
 
     const heartbeat = setInterval(() => {
       void this.beat();
@@ -135,10 +141,25 @@ class JobRunner {
 
       const models = kind === 'list' ? [] : await this.resolveModels(params, accounts);
       if (kind !== 'list') {
+        // 把这次固定住的三样东西按名字列出来。只写个数的话，「为什么全都失败」
+        // 这类问题就只能靠猜——用的哪个账号、模型排在什么顺序、试的哪几版提示词，
+        // 全是排查时第一个要看的信息。
         await this.log(
           'info',
-          `账号 ${accounts.length} 个，可用模型 ${models.length} 个，` +
-            `越狱提示词 ${prompts.map((p) => p.name).join('/')}`
+          `本次配置已固定｜账号 ${accounts.length} 个：${joinCapped(
+            accounts.map((item) => maskEmail(item.email))
+          )}`
+        );
+        await this.log(
+          'info',
+          `模型 ${models.length} 个，按此顺序尝试：${joinCapped(
+            models.map((item) => `${item.provider}/${item.name}`)
+          )}`
+        );
+        await this.log(
+          'info',
+          `越狱提示词 ${prompts.length} 版，按此顺序尝试：${prompts.map((p) => p.name).join(' → ')}｜` +
+            `单张卡最多试 ${models.length * prompts.length} 组`
         );
       }
 
@@ -158,7 +179,12 @@ class JobRunner {
 
       await this.beat();
       await repo.markJobFinished(state.jobId, state.aborted ? 'stopped' : 'completed');
-      await this.log('info', state.aborted ? '任务已停止' : '任务完成');
+      const { success, partial, failed, pagesDone, appsDiscovered } = state.stats;
+      await this.log(
+        'info',
+        `${state.aborted ? '任务已停止' : '任务完成'}｜本次成功 ${success}、部分 ${partial}、` +
+          `失败 ${failed}｜翻页 ${pagesDone}、新入库 ${appsDiscovered} 张`
+      );
     } finally {
       clearInterval(heartbeat);
       await this.releaseInflight();
@@ -167,10 +193,47 @@ class JobRunner {
   }
 
   private async resolveModels(params: JobParams, accounts: Account[]): Promise<ModelRef[]> {
-    if (params.models !== 'auto') return params.models;
+    if (params.models !== 'auto') {
+      await this.log(
+        'info',
+        `模型由任务参数指定，不向风月拉取清单：${joinCapped(
+          params.models.map((item) => `${item.provider}/${item.name}`)
+        )}`
+      );
+      return params.models;
+    }
+
     const account = accounts[0];
     if (!account) throw new Error('没有可用账号，无法自动获取模型列表');
-    return new ScraperSession(account).fetchAvailableModels();
+    const available = await new ScraperSession(account).fetchAvailableModels();
+    if (available.length === 0) throw new Error('风月返回的可用模型清单是空的');
+    const models: ModelRef[] = available.map((item) => ({
+      provider: item.provider,
+      name: item.name,
+    }));
+    await this.log(
+      'info',
+      `已从风月拉取 ${models.length} 个可用模型（推荐 ${available.filter((m) => m.recommended).length} 个）`
+    );
+
+    // 优先模型是写死在代码里的，风月那边改了 provider 名字（比如同一个 deepseek-v3.2
+    // 换了家供应商）这里会悄悄失效，排序退化成「推荐 + 成功率」也不会报错。说一声。
+    const missing = PRIORITY_MODELS.filter(
+      ([provider, name]) => !models.some((item) => item.provider === provider && item.name === name)
+    );
+    for (const [provider, name] of missing) {
+      const sameName = models.filter((item) => item.name === name);
+      await this.log(
+        'warn',
+        sameName.length > 0
+          ? `优先模型 ${provider}/${name} 不在风月清单里，改用同名的 ${joinCapped(
+              sameName.map((item) => `${item.provider}/${item.name}`),
+              3
+            )}（风月换了供应商，PRIORITY_MODELS 该更新了）`
+          : `优先模型 ${provider}/${name} 在风月清单里已经找不到，本次退回按推荐和成功率排序`
+      );
+    }
+    return models;
   }
 
   /** 写心跳并同步进度；顺便读回状态，别的实例点了停止也能感知到。 */
@@ -218,10 +281,27 @@ class JobRunner {
     const ranking = 'overall_rank';
 
     try {
-      const donePages = await repo.getDonePages(ranking);
+      const { donePages, siteTotal: knownTotal } = await repo.getListState(ranking);
+      let nextPage = 1;
+      while (donePages.has(nextPage)) nextPage += 1;
+      if (donePages.size > 0) {
+        // 跳过的页不说一声，日志就会从第 557 页凭空开始，看的人以为前面漏了几百页。
+        await this.log(
+          'info',
+          `断点续抓：已抓过 ${donePages.size} 页（每页 ${params.listLimit} 条），` +
+            `从第 ${nextPage} 页继续，最多翻到第 ${params.maxPages} 页；` +
+            `想整体重抓要先清 aiero.list_state`
+        );
+      }
+
       let emptyStreak = 0;
+      let fetched = 0;
+      let siteTotal: number | null = knownTotal;
+      let stopReason = `翻到第 ${params.maxPages} 页上限`;
+
       for (let page = 1; page <= params.maxPages; page += 1) {
         if (state.aborted) {
+          stopReason = '被停止';
           await this.log('warn', `列表同步在第 ${page} 页被停止`);
           break;
         }
@@ -231,25 +311,72 @@ class JobRunner {
         const added = await repo.upsertApps(apps);
         await repo.markPageDone(ranking, page, total, params.listLimit);
 
+        fetched += 1;
+        siteTotal = total;
         state.stats.pagesDone += 1;
         state.stats.appsDiscovered += added;
 
+        // 先记账再判断收工。原来的顺序会让触发中断的那一页没有日志，最后一次请求
+        // 在日志里等于不存在，看起来像少翻了一页。
+        await this.log(
+          'info',
+          `列表第 ${page} 页：风月返回 ${apps.length} 条，新入库 ${added} 张，` +
+            `已存在 ${apps.length - added} 张，风月报告共 ${total ?? '未知'} 张`
+        );
+
         if (apps.length === 0) {
           emptyStreak += 1;
-          if (emptyStreak >= 3) break;
+          if (emptyStreak >= EMPTY_PAGE_STREAK) {
+            stopReason = `连续 ${EMPTY_PAGE_STREAK} 页空结果，判定已翻到底`;
+            break;
+          }
         } else {
           emptyStreak = 0;
         }
 
-        await this.log('info', `列表第 ${page} 页：返回 ${apps.length}，新增 ${added}`);
         await sleep(jitteredDelay(params.listDelay, 0.3));
       }
-      await this.log('info', '列表同步结束');
+
+      await this.log(
+        'info',
+        `列表同步结束（${stopReason}）：本次翻了 ${fetched} 页，` +
+          `新入库 ${state.stats.appsDiscovered} 张，累计已抓 ${donePages.size + fetched} 页`
+      );
+      await this.reportListCoverage(siteTotal);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.log('error', `列表同步异常：${message}`);
     } finally {
       state.listDone = true;
+    }
+  }
+
+  /**
+   * 对一遍账：风月说有多少张，我们库里有多少张。
+   *
+   * 「连续几页空结果」只能说明翻不下去了，不能说明真的抓完了——风月对深分页是有
+   * offset 上限的，翻到上限之后同样是返回空页。两个数字差得多就说明被截断了，得换
+   * 排序或者加筛选条件重新抓一轮，不能当成已经抓全。
+   */
+  private async reportListCoverage(siteTotal: number | null): Promise<void> {
+    if (siteTotal === null || siteTotal <= 0) return;
+    try {
+      const overview = await repo.getOverview();
+      const ratio = overview.appsTotal / siteTotal;
+      const percent = Math.round(ratio * 100);
+      const summary = `库里 ${overview.appsTotal} 张，风月报告共 ${siteTotal} 张`;
+      if (ratio < LIST_COVERAGE_WARN) {
+        await this.log(
+          'warn',
+          `列表可能没抓全：${summary}，覆盖 ${percent}%。` +
+            `风月深分页有 offset 上限，翻到空页不一定等于抓完，` +
+            `差得多就要换排序或加筛选条件再抓一轮`
+        );
+      } else {
+        await this.log('info', `列表覆盖 ${percent}%：${summary}`);
+      }
+    } catch {
+      // 只是对账，读不到不影响任务。
     }
   }
 
@@ -270,6 +397,13 @@ class JobRunner {
     if (!state) return;
     const workerId = `${state.jobId}:${index}`;
     let idleRounds = 0;
+    let handled = 0;
+
+    await this.log(
+      'info',
+      `worker ${index} 启动｜账号 ${maskEmail(account.email)}｜` +
+        `${models.length} 个模型 × ${jailbreakPrompts.length} 版提示词`
+    );
 
     while (!state.aborted) {
       const [target] = await repo.claimApps(1, workerId);
@@ -280,7 +414,7 @@ class JobRunner {
           if (idleRounds >= IDLE_ROUNDS_BEFORE_EXIT) {
             // 说一声再退出。否则「队列本来就空」的任务只留下开始和完成两行，
             // 看日志的人不知道它是没活干还是没干活。
-            await this.log('info', `worker ${index} 队列已空，退出`);
+            await this.log('info', `worker ${index} 退出：队列已空，本轮处理了 ${handled} 张`);
             return;
           }
         }
@@ -288,6 +422,7 @@ class JobRunner {
         continue;
       }
       idleRounds = 0;
+      handled += 1;
       state.inflight.add(target.appId);
 
       try {
@@ -305,9 +440,11 @@ class JobRunner {
         } else {
           await repo.saveExtraction(state.jobId, outcome);
           state.stats[outcome.status] += 1;
+          // 失败的卡记成 warn：抽取正常时每张卡一条 info，失败混在里面根本翻不出来，
+          // 「只看警告和错误」要能一眼看全所有没抽到的卡。
           await this.log(
-            'info',
-            `完成 ${target.appId} status=${outcome.status} len=${outcome.outputLength} model=${outcome.modelProvider}/${outcome.modelName}`
+            outcome.status === 'failed' ? 'warn' : 'info',
+            describeOutcome(target, outcome)
           );
         }
       } catch (error) {
@@ -325,3 +462,70 @@ class JobRunner {
 }
 
 export const jobRunner = new JobRunner();
+
+const KIND_LABEL: Record<JobKind, string> = {
+  full: '同步列表 + 抽取提示词',
+  list: '只同步角色卡列表',
+  extract: '只抽取已入库的角色卡',
+};
+
+const STATUS_LABEL: Record<ExtractOutcome['status'], string> = {
+  success: '成功',
+  partial: '部分成功',
+  failed: '失败',
+};
+
+/** 任务开头把参数原样回显一遍。事后复盘时不用再去翻 jobs.params 的 JSON。 */
+function describeParams(kind: JobKind, params: JobParams): string {
+  const parts: string[] = [];
+  if (kind === 'list' || kind === 'full') {
+    parts.push(
+      `每页 ${params.listLimit} 条`,
+      `翻页间隔 ${params.listDelay}s`,
+      `最多翻 ${params.maxPages} 页`
+    );
+  }
+  if (kind === 'extract' || kind === 'full') {
+    parts.push(
+      `并发 ${params.workers}`,
+      `最多续写 ${params.maxRounds} 轮`,
+      `抽取间隔 ${params.taskDelay}s`,
+      `模型 ${params.models === 'auto' ? '自动拉取风月全部可用' : `指定 ${params.models.length} 个`}`,
+      `提示词 ${params.jailbreakVersions.length > 0 ? params.jailbreakVersions.join('、') : '全部启用的'}`
+    );
+  }
+  return parts.join('，');
+}
+
+/** 一张卡的抽取结果。字段一个不少：状态、产出长度、风月标称长度、模型、提示词版本、试了几组。 */
+function describeOutcome(target: ExtractTarget, outcome: ExtractOutcome): string {
+  const name = target.name ? `（${truncate(target.name, 24)}）` : '';
+  const expected = outcome.expectedLength === null ? '未知' : `${outcome.expectedLength}`;
+  const model = outcome.modelName ? `${outcome.modelProvider}/${outcome.modelName}` : '未记录';
+  const version = outcome.promptVersion || '未记录';
+  const tail = outcome.error ? `｜最后一次报错：${truncate(outcome.error, 200)}` : '';
+  return (
+    `完成 ${target.appId}${name}｜${STATUS_LABEL[outcome.status]}｜` +
+    `产出 ${outcome.outputLength} 字（风月标称 ${expected}）｜` +
+    `模型 ${model}｜提示词 ${version}｜试了 ${outcome.attempts} 组${tail}`
+  );
+}
+
+/** 邮箱只留头尾。日志是给管理员看的，但没必要把整个账号池抄进一张能导出的表里。 */
+function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at <= 0) return `${email.slice(0, 2)}***`;
+  const head = email.slice(0, Math.min(2, at));
+  return `${head}***${email.slice(at)}`;
+}
+
+/** 列名字用的：96 个模型全铺出来没人看，留前几个加个总数就够定位问题了。 */
+function joinCapped(items: string[], max = 8): string {
+  if (items.length === 0) return '无';
+  if (items.length <= max) return items.join('、');
+  return `${items.slice(0, max).join('、')} …等 ${items.length} 个`;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}

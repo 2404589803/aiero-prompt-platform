@@ -381,12 +381,21 @@ export async function saveExtraction(
 
 // ── 列表翻页断点 ──────────────────────────────────────────────────────────────
 
-export async function getDonePages(ranking: string): Promise<Set<number>> {
-  const row = await queryOne<{ done_pages: number[] }>(
-    'SELECT done_pages FROM aiero.list_state WHERE ranking = $1',
+export interface ListState {
+  donePages: Set<number>;
+  /** 风月上一次报告的角色卡总数，用来和入库数量对账。没抓过任何页时为 null。 */
+  siteTotal: number | null;
+}
+
+export async function getListState(ranking: string): Promise<ListState> {
+  const row = await queryOne<{ done_pages: number[]; total: number | null }>(
+    'SELECT done_pages, total FROM aiero.list_state WHERE ranking = $1',
     [ranking]
   );
-  return new Set(row?.done_pages ?? []);
+  return {
+    donePages: new Set(row?.done_pages ?? []),
+    siteTotal: row?.total ?? null,
+  };
 }
 
 export async function markPageDone(

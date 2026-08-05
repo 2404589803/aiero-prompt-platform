@@ -1,6 +1,7 @@
 import type {
   AccountCheckResult,
   AppSummary,
+  AvailableModel,
   Extraction,
   ExtractStatus,
   JailbreakPrompt,
@@ -126,6 +127,9 @@ export const api = {
       `/api/accounts/${id}/check`,
       { method: 'POST' }
     ),
+
+  // 现拉不缓存，要借一个账号登录风月，别放进会自动轮询的查询里。
+  models: () => request<{ items: AvailableModel[] }>('/api/models').then((r) => r.items),
 
   jailbreakPrompts: () =>
     request<{ items: JailbreakPrompt[] }>('/api/jailbreak-prompts').then((r) => r.items),

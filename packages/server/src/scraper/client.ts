@@ -7,7 +7,7 @@ import {
   OK_CODE,
   PRIORITY_MODELS,
 } from './constants.js';
-import type { ModelRef } from '@aiero/shared';
+import type { AvailableModel } from '@aiero/shared';
 
 /** token 过期，调用方应刷新后重试，而不是把这次抽取判为失败。 */
 export class TokenExpiredError extends Error {
@@ -179,10 +179,13 @@ export class ScraperSession {
   }
 
   /**
-   * 平台当前可用的模型，按「优先模型 -> 推荐 -> 成功率」排序。
+   * 风月当前可用的模型，按「优先模型 -> 同名优先模型 -> 推荐 -> 成功率」排序。
    * 抽取时按这个顺序逐个试，排在前面的更可能一次就套出来。
+   *
+   * 返回的不只是 provider/名字：推荐标记、成功率、是否命中优先模型都带出来，
+   * 模型清单页要靠这些解释「为什么是这个顺序」。
    */
-  async fetchAvailableModels(): Promise<ModelRef[]> {
+  async fetchAvailableModels(): Promise<AvailableModel[]> {
     const response = await fetch(ENDPOINTS.modelList, {
       headers: await this.headers(),
       signal: AbortSignal.timeout(60_000),
@@ -205,26 +208,33 @@ export class ScraperSession {
     }
 
     const items = [...(payload.data?.models ?? [])];
-    const priorityIndex = (provider: string, name: string) =>
-      PRIORITY_MODELS.findIndex(([p, n]) => p === provider && n === name);
-
     items.sort((a, b) => rankModel(a) - rankModel(b) || successRate(b) - successRate(a));
 
+    /**
+     * 排序档位：provider 和模型名都对上 → 只对上模型名 → 站点标了推荐 → 其余。
+     *
+     * 中间那档是给供应商改名留的余地：同一个 deepseek-v3.2 换一家 provider 挂上来，
+     * 只按 provider+name 精确匹配的话优先级会悄悄失效，退化成按推荐排序也没人发现。
+     */
     function rankModel(item: {
       provider_name?: string;
       model_id?: string;
       is_recommend?: boolean;
     }) {
-      const index = priorityIndex(item.provider_name ?? '', item.model_id ?? '');
-      if (index >= 0) return index;
-      return item.is_recommend ? PRIORITY_MODELS.length + 1 : PRIORITY_MODELS.length + 2;
+      const provider = item.provider_name ?? '';
+      const name = item.model_id ?? '';
+      const exact = PRIORITY_MODELS.findIndex(([p, n]) => p === provider && n === name);
+      if (exact >= 0) return exact;
+      const byName = PRIORITY_MODELS.findIndex(([, n]) => n === name);
+      if (byName >= 0) return PRIORITY_MODELS.length + byName;
+      return item.is_recommend ? PRIORITY_MODELS.length * 2 + 1 : PRIORITY_MODELS.length * 2 + 2;
     }
     function successRate(item: { success_rate?: number }) {
       return Number(item.success_rate ?? 0);
     }
 
     const seen = new Set<string>();
-    const out: ModelRef[] = [];
+    const out: AvailableModel[] = [];
     for (const item of items) {
       const provider = item.provider_name;
       const name = item.model_id;
@@ -232,7 +242,13 @@ export class ScraperSession {
       const key = `${provider}/${name}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ provider, name });
+      out.push({
+        provider,
+        name,
+        recommended: Boolean(item.is_recommend),
+        successRate: item.success_rate === undefined ? null : Number(item.success_rate),
+        priority: PRIORITY_MODELS.some(([p, n]) => p === provider && n === name),
+      });
     }
     return out;
   }

@@ -6,7 +6,7 @@ import type { AccountCheckResult } from '@aiero/shared';
 import { requireAdmin, requireOperator } from '../auth.js';
 import { config } from '../config.js';
 import { jobRunner } from '../jobs/runner.js';
-import { login } from '../scraper/client.js';
+import { Account, ScraperSession, login } from '../scraper/client.js';
 import * as accountStore from '../settings/accounts.js';
 import * as promptStore from '../settings/prompts.js';
 
@@ -154,6 +154,30 @@ export default async function settingsRoutes(app: FastifyInstance): Promise<void
       return reply.send({ result, account: await accountStore.getAccount(credential.id) });
     }
   );
+
+  // ── 模型清单 ──────────────────────────────────────────────────────────────
+
+  /**
+   * 风月当前可用的模型，顺序就是抽取时逐个尝试的顺序。
+   *
+   * 现拉不缓存：模型清单是风月那边随时会变的东西，缓存下来只会让人看着一份过期的
+   * 名单排查问题。拉一次要借一个账号登录，所以这个接口不该被页面轮询。
+   */
+  app.get('/api/models', { preHandler: requireAdmin }, async (_request, reply) => {
+    const credential = await accountStore.firstEnabledCredential();
+    if (!credential) {
+      return reply
+        .status(409)
+        .send({ error: 'NO_ACCOUNT', message: '账号池里没有可用账号，无法向风月拉取模型清单' });
+    }
+    try {
+      const session = new ScraperSession(new Account(credential.email, credential.password));
+      return reply.send({ items: await session.fetchAvailableModels() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.status(502).send({ error: 'UPSTREAM', message: `拉取模型清单失败：${message}` });
+    }
+  });
 
   // ── 越狱提示词 ────────────────────────────────────────────────────────────
 

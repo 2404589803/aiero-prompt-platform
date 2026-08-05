@@ -1,6 +1,14 @@
-/** 目标站点的接口与请求头，与 scraper.py 逐字对齐。 */
+/** 抓取目标（风月）的接口与请求头，与 scraper.py 逐字对齐。 */
 
-export const SITE = 'https://aigirlfriend.baby';
+import { envUrl } from '../env.js';
+
+/**
+ * 目标站根地址，由 SCRAPER_SITE 提供。
+ *
+ * 不写死在源码里：这个仓库是公开的，把目标站原样挂上去等于主动告诉别人我们在抓谁。
+ * 换目标站也只要改这一个变量。缺失时由 assertHttpConfig() 在服务启动时拦下。
+ */
+export const SITE = envUrl('SCRAPER_SITE');
 
 export const ENDPOINTS = {
   list: `${SITE}/go/api/explore/search`,

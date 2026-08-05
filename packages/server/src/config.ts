@@ -3,15 +3,9 @@
  * 这个仓库是公开的，凭据一旦写进源码就等于泄露，删掉也会留在 git 历史里。
  */
 
-import { existsSync } from 'node:fs';
-
-// 本地开发时自动读取仓库根目录的 .env；线上由 Railway 直接注入环境变量。
-for (const candidate of ['.env', '../../.env']) {
-  if (existsSync(candidate)) {
-    process.loadEnvFile(candidate);
-    break;
-  }
-}
+// 先加载 .env，再读下面的任何一个变量。
+import './env.js';
+import { SITE } from './scraper/constants.js';
 
 export interface ScraperAccountConfig {
   email: string;
@@ -107,6 +101,10 @@ export const config = {
 
 /** 起 HTTP 服务才需要的配置。缺了就别启动，免得跑起来之后所有人都登不进去。 */
 export function assertHttpConfig(): void {
+  // 没有目标站地址，抓取相关的接口全都会以看不懂的方式失败，不如启动时就说清楚。
+  if (!SITE) {
+    throw new Error('缺少 SCRAPER_SITE，抓取目标站地址必须由环境变量提供');
+  }
   if (config.authDisabled) return;
   if (!config.supabaseUrl || !config.supabaseAnonKey) {
     throw new Error('缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY，无法校验登录态');

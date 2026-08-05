@@ -10,8 +10,9 @@ import { PromptLibraryPage } from './pages/PromptLibraryPage';
 import { AppsPage } from './pages/AppsPage';
 import { AccountPoolPage } from './pages/AccountPoolPage';
 import { JailbreakPromptPage } from './pages/JailbreakPromptPage';
+import { ModelListPage } from './pages/ModelListPage';
 
-type ViewKey = 'jobs' | 'prompts' | 'apps' | 'accounts' | 'jailbreak';
+type ViewKey = 'jobs' | 'prompts' | 'apps' | 'accounts' | 'jailbreak' | 'models';
 
 const VIEW_LABEL: Record<ViewKey, string> = {
   jobs: '抓取任务',
@@ -19,6 +20,7 @@ const VIEW_LABEL: Record<ViewKey, string> = {
   apps: '角色卡',
   accounts: '账号池',
   jailbreak: '越狱提示词',
+  models: '可用模型',
 };
 
 // 抓取配置单独分组：账号和越狱提示词是「设置好就不常动」的东西，
@@ -34,6 +36,7 @@ const MENU_ITEMS = [
     children: [
       { key: 'accounts', label: VIEW_LABEL.accounts },
       { key: 'jailbreak', label: VIEW_LABEL.jailbreak },
+      { key: 'models', label: VIEW_LABEL.models },
     ],
   },
 ];
@@ -122,13 +125,14 @@ export function AieroApp() {
                 type="warning"
                 showIcon
                 banner
-                message="本平台读写的是测试库，抓取动作会真实访问第三方站点。"
+                message="本平台读写的是测试库，抓取动作会用真实账号访问风月并触发其限流。"
               />
               {view === 'jobs' ? <JobConsolePage /> : null}
               {view === 'prompts' ? <PromptLibraryPage /> : null}
               {view === 'apps' ? <AppsPage /> : null}
               {view === 'accounts' ? <AccountPoolPage /> : null}
               {view === 'jailbreak' ? <JailbreakPromptPage /> : null}
+              {view === 'models' ? <ModelListPage /> : null}
             </Space>
           )}
         </Layout.Content>
