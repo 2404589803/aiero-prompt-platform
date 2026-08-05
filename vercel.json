@@ -1,0 +1,7 @@
+{
+  "framework": null,
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm --filter @aiero/web build",
+  "outputDirectory": "packages/web/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
