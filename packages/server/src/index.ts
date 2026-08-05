@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { assertHttpConfig, config, describeConfig } from './config.js';
 import { pool } from './db.js';
+import { registerJsonBodyParser } from './json-body.js';
 import * as repo from './jobs/repository.js';
 import dataRoutes from './routes/data.js';
 import jobRoutes from './routes/jobs.js';
@@ -21,6 +22,8 @@ await app.register(cors, {
   origin: config.corsOrigins.length > 0 ? config.corsOrigins : true,
   credentials: true,
 });
+
+registerJsonBodyParser(app);
 
 app.get('/health', async () => ({ ok: true, at: new Date().toISOString() }));
 

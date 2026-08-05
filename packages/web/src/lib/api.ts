@@ -27,7 +27,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      // 只在真的有 body 时才声明 json。无条件加这个头的话，「停止任务」「体检」
+      // 「重置」这些不带 body 的 POST/DELETE 会被 Fastify 以
+      // 「Body cannot be empty when content-type is set to 'application/json'」挡掉。
+      ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init.headers,
     },
