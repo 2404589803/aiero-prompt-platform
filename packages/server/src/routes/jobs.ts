@@ -9,6 +9,13 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/** 查询串里的值都是字符串，布尔开关按 'true' 判定。 */
+interface JobLogParams {
+  limit?: string;
+  warnOnly?: string;
+  fromStart?: string;
+}
+
 /**
  * 把前端传来的参数收进安全范围。
  *
@@ -104,9 +111,17 @@ export default async function jobRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  app.get<{ Params: { id: string } }>(
+  app.get<{ Params: { id: string }; Querystring: JobLogParams }>(
     '/api/jobs/:id/logs',
     { preHandler: requireAdmin },
-    async (request) => ({ items: await repo.listJobLogs(request.params.id, 200) })
+    async (request) => {
+      const raw = request.query;
+      return repo.listJobLogs(request.params.id, {
+        // 上限不是怕人乱填，是怕一次把十万条流水塞进浏览器把页面卡死。
+        limit: clamp(Number(raw.limit) || 200, 20, 2000),
+        warnOnly: raw.warnOnly === 'true',
+        fromStart: raw.fromStart === 'true',
+      });
+    }
   );
 }

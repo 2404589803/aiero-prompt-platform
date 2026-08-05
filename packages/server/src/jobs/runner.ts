@@ -85,9 +85,16 @@ class JobRunner {
     };
 
     // 不 await：任务可能跑几小时，HTTP 请求要立刻返回。
-    void this.run(kind, params).catch((error: unknown) => {
+    void this.run(kind, params).catch(async (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      void repo.markJobFinished(job.id, 'failed', message);
+      // 失败原因也写进日志流：只记在 job.error 里的话，日志面板会是一段没有结局的
+      // 流水，看的人分不清任务是跑完了还是崩在半路。
+      try {
+        await repo.appendJobLog(job.id, 'error', `任务失败：${message}`);
+      } catch {
+        // 日志写不进去不该拦住状态收尾。
+      }
+      await repo.markJobFinished(job.id, 'failed', message);
       this.state = null;
     });
 
@@ -270,7 +277,12 @@ class JobRunner {
       if (!target) {
         if (state.listDone) {
           idleRounds += 1;
-          if (idleRounds >= IDLE_ROUNDS_BEFORE_EXIT) return;
+          if (idleRounds >= IDLE_ROUNDS_BEFORE_EXIT) {
+            // 说一声再退出。否则「队列本来就空」的任务只留下开始和完成两行，
+            // 看日志的人不知道它是没活干还是没干活。
+            await this.log('info', `worker ${index} 队列已空，退出`);
+            return;
+          }
         }
         await sleep(QUEUE_POLL_MS);
         continue;

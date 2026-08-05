@@ -171,22 +171,58 @@ export async function appendJobLog(
   ]);
 }
 
-export async function listJobLogs(jobId: string, limit = 200): Promise<JobLogEntry[]> {
-  const rows = await query<{
-    id: number;
-    level: JobLogEntry['level'];
-    message: string;
-    created_at: Date;
-  }>(
-    'SELECT id, level, message, created_at FROM aiero.job_logs WHERE job_id = $1 ORDER BY id DESC LIMIT $2',
-    [jobId, limit]
-  );
-  return rows.map((row) => ({
-    id: row.id,
-    level: row.level,
-    message: row.message,
-    createdAt: row.created_at.toISOString(),
-  }));
+export interface JobLogQuery {
+  limit: number;
+  /** 只看警告和错误。抽取时每张卡都写一条 info，排查问题时噪声会压倒信号。 */
+  warnOnly: boolean;
+  /**
+   * 取最早的 N 条而不是最新的 N 条。
+   *
+   * 任务开头那几行写着这次用了哪些账号、模型和提示词，是排查「为什么全都失败」
+   * 最有用的信息，但一场全量抽取有十万条流水，它早就被冲到看不见的地方了。
+   */
+  fromStart: boolean;
+}
+
+/**
+ * 读某个任务的日志。
+ *
+ * 不做游标翻页：十万条流水逐页往前翻没人会真的翻到底，「看最近若干条」加上
+ * 「只看警告以上」「看开头若干条」三个开关就能覆盖排查需要，而且和运行中任务的
+ * 轮询天然兼容——游标翻页碰上不断追加的新日志会出现空档或重复。
+ *
+ * 返回的条目一律按时间正序，跟终端一致，调用方不用再关心取的是哪一段。
+ */
+export async function listJobLogs(
+  jobId: string,
+  options: JobLogQuery
+): Promise<{ items: JobLogEntry[]; total: number }> {
+  const levelFilter = options.warnOnly ? `AND level IN ('warn', 'error')` : '';
+  const direction = options.fromStart ? 'ASC' : 'DESC';
+
+  const [rows, counted] = await Promise.all([
+    query<{ id: number; level: JobLogEntry['level']; message: string; created_at: Date }>(
+      `SELECT id, level, message, created_at FROM aiero.job_logs
+        WHERE job_id = $1 ${levelFilter}
+        ORDER BY id ${direction} LIMIT $2`,
+      [jobId, options.limit]
+    ),
+    queryOne<{ total: number }>(
+      `SELECT count(*)::int AS total FROM aiero.job_logs WHERE job_id = $1 ${levelFilter}`,
+      [jobId]
+    ),
+  ]);
+
+  const ordered = options.fromStart ? rows : rows.reverse();
+  return {
+    items: ordered.map((row) => ({
+      id: row.id,
+      level: row.level,
+      message: row.message,
+      createdAt: row.created_at.toISOString(),
+    })),
+    total: counted?.total ?? 0,
+  };
 }
 
 // ── 角色卡 ────────────────────────────────────────────────────────────────────

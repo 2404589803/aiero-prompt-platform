@@ -6,7 +6,7 @@ import type {
   JailbreakPrompt,
   Job,
   JobKind,
-  JobLogEntry,
+  JobLogPage,
   JobParams,
   OverviewStats,
   Paginated,
@@ -39,6 +39,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface JobLogOptions {
+  /** 取多少条，省略按后端默认 200 条。 */
+  limit?: number;
+  /** 只看警告和错误。 */
+  warnOnly?: boolean;
+  /** 取最早的若干条而不是最新的，用来看任务开头那段配置。 */
+  fromStart?: boolean;
+}
+
 export interface CurrentUser {
   userId: string;
   email: string;
@@ -55,8 +64,14 @@ export const api = {
 
   jobs: () => request<{ items: Job[] }>('/api/jobs').then((r) => r.items),
 
-  jobLogs: (jobId: string) =>
-    request<{ items: JobLogEntry[] }>(`/api/jobs/${jobId}/logs`).then((r) => r.items),
+  jobLogs: (jobId: string, options: JobLogOptions = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.warnOnly) params.set('warnOnly', 'true');
+    if (options.fromStart) params.set('fromStart', 'true');
+    const query = params.toString();
+    return request<JobLogPage>(`/api/jobs/${jobId}/logs${query ? `?${query}` : ''}`);
+  },
 
   startJob: (kind: JobKind, params: JobParams) =>
     request<{ job: Job }>('/api/jobs', {

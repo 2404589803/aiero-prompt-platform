@@ -107,8 +107,10 @@ body {
   font-family: 'JetBrains Mono', Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
-  max-height: 320px;
   overflow: auto;
+  /* 报错信息可能很长且自带换行，原样折行显示，不要横向滚动条。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .log-stream .log-warn {

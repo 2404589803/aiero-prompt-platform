@@ -151,6 +151,15 @@ export interface JobLogEntry {
   createdAt: string;
 }
 
+/** 日志分页：items 一律按时间正序，total 是当前过滤条件下的总条数。 */
+export interface JobLogPage {
+  items: JobLogEntry[];
+  total: number;
+}
+
+/** 日志查看的取值范围。全量抽取一场能写出十万条流水，不能一次全拉。 */
+export const JOB_LOG_LIMITS = [200, 500, 1000, 2000] as const;
+
 /** 总览数字，仪表盘和任务页共用。 */
 export interface OverviewStats {
   appsTotal: number;

@@ -6,6 +6,7 @@ import {
   Card,
   Col,
   Descriptions,
+  Drawer,
   Form,
   InputNumber,
   Popconfirm,
@@ -27,6 +28,7 @@ import {
   type JobParams,
 } from '@aiero/shared';
 import { api } from '../lib/api';
+import { JobLogViewer } from '../components/JobLogViewer';
 
 /** 任务在跑时刷得勤一点，让进度看起来是活的；闲着时降下来省请求。 */
 const ACTIVE_POLL_MS = 3000;
@@ -88,14 +90,10 @@ export function JobConsolePage() {
     [jailbreakPrompts.data]
   );
 
-  const logs = useQuery({
-    queryKey: ['jobLogs', running?.id],
-    queryFn: () => api.jobLogs(running!.id),
-    enabled: Boolean(running),
-    refetchInterval: ACTIVE_POLL_MS,
-  });
-
   const [starting, setStarting] = useState(false);
+  // 历史任务的日志放抽屉里看。任务跑完或启动就失败时，「当前任务」那张卡会消失，
+  // 过程日志得有个事后能翻回来的地方。
+  const [logJob, setLogJob] = useState<Job | null>(null);
 
   const startJob = useMutation({
     mutationFn: async (values: JobParams & { kind: JobKind }) => {
@@ -124,8 +122,6 @@ export function JobConsolePage() {
   const processed = stats ? stats.success + stats.partial + stats.failed : 0;
   const percent =
     stats && stats.appsTotal > 0 ? Math.round((processed / stats.appsTotal) * 100) : 0;
-
-  const logLines = useMemo(() => (logs.data ?? []).slice().reverse(), [logs.data]);
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -209,17 +205,7 @@ export function JobConsolePage() {
           <Typography.Title level={5} style={{ marginTop: 16 }}>
             运行日志
           </Typography.Title>
-          <div className="log-stream">
-            {logLines.length === 0 ? (
-              <div>等待日志…</div>
-            ) : (
-              logLines.map((entry) => (
-                <div key={entry.id} className={`log-${entry.level}`}>
-                  {new Date(entry.createdAt).toLocaleTimeString('zh-CN')} {entry.message}
-                </div>
-              ))
-            )}
-          </div>
+          <JobLogViewer jobId={running.id} live />
         </Card>
       ) : (
         <Card title="启动新任务">
@@ -322,9 +308,57 @@ export function JobConsolePage() {
               ellipsis: true,
               render: (value: string | null) => value ?? '—',
             },
+            {
+              title: '过程日志',
+              width: 100,
+              render: (_, row: Job) => (
+                <Button type="link" size="small" onClick={() => setLogJob(row)}>
+                  查看
+                </Button>
+              ),
+            },
           ]}
         />
       </Card>
+
+      <Drawer
+        open={Boolean(logJob)}
+        onClose={() => setLogJob(null)}
+        width={880}
+        title={logJob ? `过程日志 · ${KIND_LABEL[logJob.kind]}` : '过程日志'}
+        destroyOnClose
+      >
+        {logJob ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Descriptions column={2} size="small">
+              <Descriptions.Item label="状态">
+                <Tag color={STATUS_COLOR[logJob.status]}>{STATUS_LABEL[logJob.status]}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="发起人">{logJob.createdBy ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="开始时间">
+                {logJob.startedAt ? new Date(logJob.startedAt).toLocaleString('zh-CN') : '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="结束时间">
+                {logJob.finishedAt ? new Date(logJob.finishedAt).toLocaleString('zh-CN') : '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="成功 / 部分 / 失败" span={2}>
+                {logJob.stats.success} / {logJob.stats.partial} / {logJob.stats.failed}
+              </Descriptions.Item>
+              {logJob.error ? (
+                <Descriptions.Item label="错误" span={2}>
+                  <Typography.Text type="danger">{logJob.error}</Typography.Text>
+                </Descriptions.Item>
+              ) : null}
+            </Descriptions>
+            <JobLogViewer
+              jobId={logJob.id}
+              live={isJobActive(logJob.status)}
+              height={520}
+              key={logJob.id}
+            />
+          </Space>
+        ) : null}
+      </Drawer>
     </Space>
   );
 }
