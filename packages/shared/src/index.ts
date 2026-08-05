@@ -98,6 +98,7 @@ export interface AppSummary {
   name: string | null;
   prePromptLength: number | null;
   worldBookLength: number | null;
+  /** 站点的总榜热度分，不是名次：值越大越热门，量级到千亿。 */
   overallRank: number | null;
   avgCost: number | null;
   accountName: string | null;

@@ -3,6 +3,7 @@ import { App as AntApp, Button, Card, Input, Select, Space, Table, Tag, Tooltip 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AppSummary, ExtractStatus } from '@aiero/shared';
 import { api } from '../lib/api';
+import { formatHeat } from '../lib/format';
 
 const STATUS_META: Record<ExtractStatus, { label: string; color: string }> = {
   pending: { label: '待抽取', color: 'default' },
@@ -88,7 +89,12 @@ export function AppsPage() {
           }}
           columns={[
             { title: '角色卡', dataIndex: 'name', width: 220, ellipsis: true },
-            { title: '总榜名次', dataIndex: 'overallRank', width: 100 },
+            {
+              title: '热度分',
+              dataIndex: 'overallRank',
+              width: 130,
+              render: formatHeat,
+            },
             { title: '作者', dataIndex: 'accountName', width: 140, ellipsis: true },
             {
               title: '标称提示词长度',

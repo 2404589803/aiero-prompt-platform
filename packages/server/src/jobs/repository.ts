@@ -196,17 +196,25 @@ export async function listJobLogs(jobId: string, limit = 200): Promise<JobLogEnt
  *
  * 用 unnest 一次写一批而不是逐行 insert：存量导入有 11.5 万行，
  * 逐行写要几万次往返，批量写只要几十次。
+ * overall_rank 和 world_book_length 必须按 bigint 传，站点给的值远超 int32。
  * 冲突时只更新站点侧的元数据，绝不动 extract_status，否则重跑列表会把抽过的卡打回待抽。
  */
 export async function upsertApps(apps: RawListApp[]): Promise<number> {
-  const valid = apps.filter((app): app is RawListApp & { id: string } => Boolean(app.id));
+  // 同一批里出现重复 app_id 会让整条 ON CONFLICT 语句报错（一行不能被同一命令改两次），
+  // 一页写入就全废了。站点的分页会在翻页期间漂移，存量 queue.jsonl 里也确实有重复，
+  // 所以先按 app_id 去重，同一 id 保留最后出现的那条（更新的数据）。
+  const deduped = new Map<string, RawListApp & { id: string }>();
+  for (const app of apps) {
+    if (app.id) deduped.set(app.id, { ...app, id: app.id });
+  }
+  const valid = [...deduped.values()];
   if (valid.length === 0) return 0;
 
   const rows = await query<{ inserted: boolean }>(
     `INSERT INTO aiero.apps
        (app_id, name, pre_prompt_length, world_book_length, overall_rank, avg_cost, account_name, summary)
      SELECT * FROM unnest(
-       $1::text[], $2::text[], $3::int[], $4::int[], $5::int[], $6::numeric[], $7::text[], $8::text[]
+       $1::text[], $2::text[], $3::int[], $4::bigint[], $5::bigint[], $6::numeric[], $7::text[], $8::text[]
      )
      ON CONFLICT (app_id) DO UPDATE SET
        name = EXCLUDED.name,
@@ -242,7 +250,9 @@ export interface ClaimedApp {
  *
  * SKIP LOCKED 是这里的关键：多个 worker 并发领取时互相跳过对方锁住的行，
  * 既不会重复领取，也不会互相阻塞。原实现靠进程内的 claimed 集合，多容器就失效了。
- * 按总榜名次排序，让靠前的热门卡先被抽到。
+ *
+ * overall_rank 是热度分不是名次，越大越热门，所以按 DESC 领取。
+ * 11.5 万张卡短期内抽不完，顺序错了等于优先抓最冷门的。
  */
 export async function claimApps(count: number, claimedBy: string): Promise<ClaimedApp[]> {
   if (count <= 0) return [];
@@ -254,7 +264,7 @@ export async function claimApps(count: number, claimedBy: string): Promise<Claim
     `WITH candidates AS (
        SELECT app_id FROM aiero.apps
        WHERE extract_status = 'pending'
-       ORDER BY overall_rank NULLS LAST, discovered_at
+       ORDER BY overall_rank DESC NULLS LAST, discovered_at
        LIMIT $1
        FOR UPDATE SKIP LOCKED
      )
@@ -436,7 +446,7 @@ export async function listApps(input: AppQuery): Promise<Paginated<AppSummary>> 
     last_error: string | null;
   }>(
     `SELECT * FROM aiero.apps ${where}
-     ORDER BY overall_rank NULLS LAST, discovered_at
+     ORDER BY overall_rank DESC NULLS LAST, discovered_at
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );

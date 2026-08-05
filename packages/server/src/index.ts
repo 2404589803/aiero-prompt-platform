@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { config, describeConfig } from './config.js';
+import { assertHttpConfig, config, describeConfig } from './config.js';
 import { pool } from './db.js';
 import * as repo from './jobs/repository.js';
 import dataRoutes from './routes/data.js';
 import jobRoutes from './routes/jobs.js';
+
+assertHttpConfig();
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },

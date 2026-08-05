@@ -74,9 +74,13 @@ export const config = {
   /** 测试库的 Postgres 直连串。抓取任务要用 FOR UPDATE SKIP LOCKED，不走 PostgREST。 */
   databaseUrl: required('DATABASE_URL'),
 
-  /** 校验前端传来的 Supabase JWT 用。 */
-  supabaseUrl: required('SUPABASE_URL'),
-  supabaseAnonKey: required('SUPABASE_ANON_KEY'),
+  /**
+   * 校验前端传来的 Supabase JWT 用。
+   * 这里不用 required()：导入脚本这类只碰数据库的入口不该被登录配置挡住，
+   * 缺失与否由 assertHttpConfig() 在服务启动时把关。
+   */
+  supabaseUrl: process.env.SUPABASE_URL ?? '',
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? '',
 
   accounts: parseAccounts(),
   corsOrigins: parseOrigins(),
@@ -90,6 +94,14 @@ export const config = {
   /** running 状态超过这个时长仍无心跳，判定为容器已死，把卡放回 pending。 */
   staleClaimMinutes: optionalNumber('STALE_CLAIM_MINUTES', 30),
 } as const;
+
+/** 起 HTTP 服务才需要的配置。缺了就别启动，免得跑起来之后所有人都登不进去。 */
+export function assertHttpConfig(): void {
+  if (config.authDisabled) return;
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    throw new Error('缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY，无法校验登录态');
+  }
+}
 
 export function describeConfig(): Record<string, unknown> {
   return {

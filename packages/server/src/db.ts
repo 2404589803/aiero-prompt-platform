@@ -1,6 +1,11 @@
 import pg from 'pg';
 import { config } from './config.js';
 
+// node-postgres 默认把 int8 当字符串返回，怕的是超过 JS 安全整数。
+// 这里的 int8 只有热度分（最大约 2700 亿）、世界书长度和自增主键，都远在 2^53 以内，
+// 转成 number 前端才能正常比较和格式化。
+pg.types.setTypeParser(pg.types.builtins.INT8, (value) => Number(value));
+
 /**
  * Supabase 的连接串带 SSL，但证书链在容器里通常验不过，
  * 所以关掉证书校验只保留加密传输——与项目里其它服务的做法一致。

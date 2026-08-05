@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from './config.js';
 import { queryOne } from './db.js';
@@ -16,9 +16,15 @@ declare module 'fastify' {
   }
 }
 
-const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+// 延迟创建：导入脚本之类的入口会间接加载到这个模块，但用不上 Supabase，
+// 不该因为没配这两个变量就起不来。
+let cachedClient: SupabaseClient | null = null;
+function getSupabase(): SupabaseClient {
+  cachedClient ??= createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return cachedClient;
+}
 
 const DEV_USER: AuthUser = {
   userId: '00000000-0000-0000-0000-000000000000',
@@ -46,7 +52,7 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
     return;
   }
 
-  const { data, error } = await supabase.auth.getUser(token);
+  const { data, error } = await getSupabase().auth.getUser(token);
   if (error || !data.user) {
     await reply.status(401).send({ error: 'UNAUTHORIZED', message: '登录已失效，请重新登录' });
     return;

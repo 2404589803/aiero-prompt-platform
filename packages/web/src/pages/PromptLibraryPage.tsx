@@ -16,6 +16,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import type { PromptListItem } from '@aiero/shared';
 import { api } from '../lib/api';
+import { formatHeat } from '../lib/format';
 
 type StatusFilter = 'all' | 'success' | 'partial';
 
@@ -105,7 +106,7 @@ export function PromptLibraryPage() {
           }}
           columns={[
             { title: '角色卡', dataIndex: 'name', width: 200, ellipsis: true },
-            { title: '总榜名次', dataIndex: 'overallRank', width: 100 },
+            { title: '热度分', dataIndex: 'overallRank', width: 100, render: formatHeat },
             {
               title: '结果',
               dataIndex: 'extractStatus',

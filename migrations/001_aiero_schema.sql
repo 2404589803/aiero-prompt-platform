@@ -55,8 +55,9 @@ CREATE TABLE IF NOT EXISTS aiero.apps (
   app_id             TEXT PRIMARY KEY,
   name               TEXT,
   pre_prompt_length  INTEGER,
-  world_book_length  INTEGER,
-  overall_rank       INTEGER,
+  -- 世界书实测能到 470 万字符，角色卡热度分能到 2718 亿，两个都放不进 INTEGER。
+  world_book_length  BIGINT,
+  overall_rank       BIGINT,
   avg_cost           NUMERIC,
   account_name       TEXT,
   summary            TEXT,
@@ -78,15 +79,18 @@ COMMENT ON COLUMN aiero.apps.extract_status IS
   'pending 待抽取 / running 抽取中 / success 成功 / partial 部分成功 / failed 失败。';
 COMMENT ON COLUMN aiero.apps.claimed_at IS
   '领取时间。running 且领取时间过久即为僵尸，由 reclaim 逻辑放回 pending。';
+COMMENT ON COLUMN aiero.apps.overall_rank IS
+  '站点的总榜热度分，不是名次：值越大越靠前，实测范围约 5 千万到 2700 亿。排序一律用 DESC。';
 
--- 领取队列的主索引：按总榜名次优先抽取靠前的卡。
+-- 领取队列的主索引。排序方向必须和领取语句一致，否则用不上索引，
+-- 而且抓取顺序会从最冷门的卡开始。
 CREATE INDEX IF NOT EXISTS idx_apps_pending_rank
-  ON aiero.apps (overall_rank NULLS LAST, discovered_at)
+  ON aiero.apps (overall_rank DESC NULLS LAST, discovered_at)
   WHERE extract_status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_apps_status ON aiero.apps (extract_status);
 CREATE INDEX IF NOT EXISTS idx_apps_claimed ON aiero.apps (claimed_at) WHERE extract_status = 'running';
-CREATE INDEX IF NOT EXISTS idx_apps_rank ON aiero.apps (overall_rank NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_apps_rank ON aiero.apps (overall_rank DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_apps_name ON aiero.apps (name);
 
 -- ── 抽取结果 ────────────────────────────────────────────────────────────────
