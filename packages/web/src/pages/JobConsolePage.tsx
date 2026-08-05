@@ -21,7 +21,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DEFAULT_JOB_PARAMS,
-  JAILBREAK_VERSIONS,
   isJobActive,
   type Job,
   type JobKind,
@@ -78,6 +77,16 @@ export function JobConsolePage() {
   });
 
   const jobs = useQuery({ queryKey: ['jobs'], queryFn: api.jobs, refetchInterval: IDLE_POLL_MS });
+
+  // 可选的越狱提示词来自提示词库，新增一版立刻能在这里选到。
+  const jailbreakPrompts = useQuery({
+    queryKey: ['jailbreakPrompts'],
+    queryFn: api.jailbreakPrompts,
+  });
+  const enabledPrompts = useMemo(
+    () => (jailbreakPrompts.data ?? []).filter((prompt) => prompt.enabled),
+    [jailbreakPrompts.data]
+  );
 
   const logs = useQuery({
     queryKey: ['jobLogs', running?.id],
@@ -190,6 +199,11 @@ export function JobConsolePage() {
               {running.stats.appsDiscovered}
             </Descriptions.Item>
             <Descriptions.Item label="并发数">{running.params.workers}</Descriptions.Item>
+            <Descriptions.Item label="越狱提示词" span={2}>
+              {running.params.jailbreakVersions.length > 0
+                ? running.params.jailbreakVersions.join(' / ')
+                : '全部启用的'}
+            </Descriptions.Item>
           </Descriptions>
 
           <Typography.Title level={5} style={{ marginTop: 16 }}>
@@ -243,11 +257,22 @@ export function JobConsolePage() {
             <Form.Item name="maxPages" label="最多翻页">
               <InputNumber min={1} max={100000} />
             </Form.Item>
-            <Form.Item name="jailbreakVersions" label="越狱版本" style={{ minWidth: 260 }}>
+            <Form.Item
+              name="jailbreakVersions"
+              label="越狱提示词"
+              style={{ minWidth: 300 }}
+              extra="留空表示用全部启用的"
+            >
               <Select
                 mode="multiple"
-                options={JAILBREAK_VERSIONS.map((v) => ({ label: v, value: v }))}
-                style={{ minWidth: 160 }}
+                allowClear
+                placeholder={enabledPrompts.length > 0 ? '全部启用的' : '提示词库里没有启用的版本'}
+                loading={jailbreakPrompts.isLoading}
+                options={enabledPrompts.map((prompt) => ({
+                  label: prompt.name,
+                  value: prompt.name,
+                }))}
+                style={{ minWidth: 200 }}
               />
             </Form.Item>
             <Form.Item>

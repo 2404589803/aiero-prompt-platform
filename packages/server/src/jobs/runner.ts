@@ -6,9 +6,11 @@ import {
   type JobStats,
   type ModelRef,
 } from '@aiero/shared';
-import { config } from '../config.js';
 import { Account, ScraperSession, fetchListPage, jitteredDelay, sleep } from '../scraper/client.js';
 import { extractOne } from '../scraper/extract.js';
+import * as accountStore from '../settings/accounts.js';
+import * as promptStore from '../settings/prompts.js';
+import type { PromptRef } from '../settings/prompts.js';
 import * as repo from './repository.js';
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
@@ -51,8 +53,16 @@ class JobRunner {
 
   async start(kind: JobKind, params: JobParams, createdBy: string | null): Promise<Job> {
     if (this.state) throw new JobAlreadyRunningError();
-    if (kind !== 'list' && config.accounts.length === 0) {
-      throw new Error('没有配置抓取账号，无法执行抽取任务（设置 SCRAPER_ACCOUNTS）');
+
+    // 抽取的两个前置条件在建任务之前查，让人在启动按钮上就看到原因，
+    // 而不是任务起来了再从日志里翻。
+    if (kind !== 'list') {
+      if ((await accountStore.countEnabled()) === 0) {
+        throw new Error('账号池里没有启用的账号，先去「账号池」加一个再启动抽取');
+      }
+      if ((await promptStore.countEnabled()) === 0) {
+        throw new Error('没有启用的越狱提示词，先去「越狱提示词」启用至少一版');
+      }
     }
 
     let job: Job;
@@ -104,12 +114,24 @@ class JobRunner {
     }, HEARTBEAT_INTERVAL_MS);
 
     try {
-      const accounts = config.accounts.map((item) => new Account(item.email, item.password));
+      // 账号和提示词在任务开始时取一次并固定住：跑到一半被人改配置会让统计
+      // 变得无法解释——同一个任务里前一半用 A 版、后一半用 B 版，成功率就没法归因了。
+      const credentials = kind === 'list' ? [] : await accountStore.listEnabledCredentials();
+      const accounts = credentials.map((item) => new Account(item.email, item.password));
+      const prompts =
+        kind === 'list' ? [] : await promptStore.listEnabledPrompts(params.jailbreakVersions);
+
+      if (kind !== 'list') {
+        if (accounts.length === 0) throw new Error('账号池里没有可用账号（密码可能需要重新录入）');
+        if (prompts.length === 0) throw new Error('选中的越狱提示词都不可用，请检查是否被禁用');
+      }
+
       const models = kind === 'list' ? [] : await this.resolveModels(params, accounts);
       if (kind !== 'list') {
         await this.log(
           'info',
-          `可用模型 ${models.length} 个，越狱版本 ${params.jailbreakVersions.join('/')}`
+          `账号 ${accounts.length} 个，可用模型 ${models.length} 个，` +
+            `越狱提示词 ${prompts.map((p) => p.name).join('/')}`
         );
       }
 
@@ -122,7 +144,7 @@ class JobRunner {
         for (let index = 0; index < workerCount; index += 1) {
           const account = accounts[index % accounts.length];
           if (!account) break;
-          tasks.push(this.runExtractWorker(index, account, models, params));
+          tasks.push(this.runExtractWorker(index, account, models, prompts, params));
         }
       }
       await Promise.all(tasks);
@@ -234,6 +256,7 @@ class JobRunner {
     index: number,
     account: Account,
     models: ModelRef[],
+    jailbreakPrompts: PromptRef[],
     params: JobParams
   ): Promise<void> {
     const state = this.state;
@@ -258,7 +281,7 @@ class JobRunner {
       try {
         const outcome = await extractOne(account, target, {
           models,
-          jailbreakVersions: params.jailbreakVersions,
+          jailbreakPrompts,
           maxRounds: params.maxRounds,
           shouldStop: () => state.aborted,
           onLog: (level, message) => void this.log(level, message),

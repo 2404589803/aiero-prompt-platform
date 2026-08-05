@@ -50,7 +50,8 @@ interface SseChunk {
   model_id?: string;
 }
 
-async function login(email: string, password: string): Promise<string> {
+/** 登录换 token。账号池的登录体检直接用它，不必先造出一个 Account。 */
+export async function login(email: string, password: string): Promise<string> {
   const response = await fetch(ENDPOINTS.login, {
     method: 'POST',
     headers: BASE_HEADERS,

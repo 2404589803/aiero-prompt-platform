@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_JOB_PARAMS, JAILBREAK_VERSIONS, JOB_KINDS } from '@aiero/shared';
-import type { JailbreakVersion, JobKind, JobParams, ModelRef } from '@aiero/shared';
+import { DEFAULT_JOB_PARAMS, JAILBREAK_NAME_MAX, JOB_KINDS } from '@aiero/shared';
+import type { JobKind, JobParams, ModelRef } from '@aiero/shared';
 import { requireAdmin, requireOperator } from '../auth.js';
 import { JobAlreadyRunningError, jobRunner } from '../jobs/runner.js';
 import * as repo from '../jobs/repository.js';
@@ -18,10 +18,17 @@ function clamp(value: number, min: number, max: number): number {
 function normalizeParams(input: unknown): JobParams {
   const raw = (input ?? {}) as Partial<JobParams>;
 
+  // 提示词名字不在这里校验存在性：运行器取的时候会按名字去库里查，
+  // 查不到就报「选中的提示词都不可用」，比在这里返回 400 更贴近实际原因。
   const versions = Array.isArray(raw.jailbreakVersions)
-    ? raw.jailbreakVersions.filter((v): v is JailbreakVersion =>
-        (JAILBREAK_VERSIONS as readonly string[]).includes(v)
-      )
+    ? [
+        ...new Set(
+          raw.jailbreakVersions
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => v.trim())
+            .filter((v) => v.length > 0 && v.length <= JAILBREAK_NAME_MAX)
+        ),
+      ].slice(0, 20)
     : [];
 
   let models: JobParams['models'] = 'auto';
@@ -40,7 +47,8 @@ function normalizeParams(input: unknown): JobParams {
     maxPages: clamp(Number(raw.maxPages ?? DEFAULT_JOB_PARAMS.maxPages) || 1000, 1, 100_000),
     maxRounds: clamp(Number(raw.maxRounds ?? DEFAULT_JOB_PARAMS.maxRounds) || 8, 1, 30),
     taskDelay: clamp(Number(raw.taskDelay ?? DEFAULT_JOB_PARAMS.taskDelay) || 1, 0, 60),
-    jailbreakVersions: versions.length > 0 ? versions : DEFAULT_JOB_PARAMS.jailbreakVersions,
+    // 空数组是有意义的取值：表示「用全部启用的提示词」。
+    jailbreakVersions: versions,
     models,
   };
 }

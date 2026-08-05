@@ -1,7 +1,9 @@
 import type {
+  AccountCheckResult,
   AppSummary,
   Extraction,
   ExtractStatus,
+  JailbreakPrompt,
   Job,
   JobKind,
   JobLogEntry,
@@ -9,6 +11,7 @@ import type {
   OverviewStats,
   Paginated,
   PromptListItem,
+  ScraperAccount,
 } from '@aiero/shared';
 import { supabase } from './supabase';
 
@@ -79,6 +82,61 @@ export const api = {
 
   resetApp: (appId: string) =>
     request<{ ok: true }>(`/api/apps/${appId}/reset`, { method: 'POST' }),
+
+  accounts: () =>
+    request<{ items: ScraperAccount[]; encryptionEnabled: boolean; hasPlaintext: boolean }>(
+      '/api/accounts'
+    ),
+
+  createAccount: (input: { email: string; password: string; note: string | null }) =>
+    request<{ account: ScraperAccount }>('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.account),
+
+  // password 不传表示不改密码：接口不回显密码，只改备注时不该被迫重填。
+  updateAccount: (
+    id: string,
+    input: { email?: string; password?: string; note?: string | null; enabled?: boolean }
+  ) =>
+    request<{ account: ScraperAccount }>(`/api/accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }).then((r) => r.account),
+
+  deleteAccount: (id: string) => request<{ ok: true }>(`/api/accounts/${id}`, { method: 'DELETE' }),
+
+  checkAccount: (id: string) =>
+    request<{ result: AccountCheckResult; account: ScraperAccount | null }>(
+      `/api/accounts/${id}/check`,
+      { method: 'POST' }
+    ),
+
+  jailbreakPrompts: () =>
+    request<{ items: JailbreakPrompt[] }>('/api/jailbreak-prompts').then((r) => r.items),
+
+  createJailbreakPrompt: (input: {
+    name: string;
+    content: string;
+    enabled: boolean;
+    sortOrder: number;
+  }) =>
+    request<{ prompt: JailbreakPrompt }>('/api/jailbreak-prompts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.prompt),
+
+  updateJailbreakPrompt: (
+    id: string,
+    input: { content?: string; enabled?: boolean; sortOrder?: number }
+  ) =>
+    request<{ prompt: JailbreakPrompt }>(`/api/jailbreak-prompts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }).then((r) => r.prompt),
+
+  deleteJailbreakPrompt: (id: string) =>
+    request<{ ok: true }>(`/api/jailbreak-prompts/${id}`, { method: 'DELETE' }),
 };
 
 function toQuery(input: Record<string, unknown>): string {

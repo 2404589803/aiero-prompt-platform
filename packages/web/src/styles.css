@@ -92,6 +92,13 @@ body {
   overflow: auto;
 }
 
+/* 越狱提示词讲究逐字原样，等宽字体下缩进和空行的变化才看得出来。 */
+.prompt-editor {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .log-stream {
   background: #10201d;
   color: #cfe8e2;

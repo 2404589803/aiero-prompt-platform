@@ -1,8 +1,5 @@
 /** 前后端共用的类型与常量。 */
 
-export const JAILBREAK_VERSIONS = ['v1', 'v2', 'v3'] as const;
-export type JailbreakVersion = (typeof JAILBREAK_VERSIONS)[number];
-
 export const JOB_KINDS = ['list', 'extract', 'full'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -38,8 +35,11 @@ export interface JobParams {
   maxRounds: number;
   /** 两次抽取之间的间隔秒数，实际会再叠加 0~40% 的随机抖动。 */
   taskDelay: number;
-  /** 使用哪些越狱提示词版本，按顺序尝试。 */
-  jailbreakVersions: JailbreakVersion[];
+  /**
+   * 用哪些越狱提示词，填提示词名字，按越狱提示词页里的顺序尝试。
+   * 留空表示「用全部启用的」——上新一版提示词后不用回来改每个任务。
+   */
+  jailbreakVersions: string[];
   /** 'auto' 表示登录后拉平台全部可用模型；否则是 provider/name 列表。 */
   models: 'auto' | ModelRef[];
 }
@@ -56,7 +56,7 @@ export const DEFAULT_JOB_PARAMS: JobParams = {
   maxPages: 1000,
   maxRounds: 8,
   taskDelay: 1,
-  jailbreakVersions: ['v1', 'v2', 'v3'],
+  jailbreakVersions: [],
   models: 'auto',
 };
 
@@ -167,6 +167,57 @@ export interface Paginated<T> {
   page: number;
   pageSize: number;
 }
+
+/**
+ * 站点账号池里的一个账号。
+ *
+ * 没有 password 字段是故意的：密码只写不读，任何接口都不回传，
+ * 页面上要改密码只能整个覆盖。
+ */
+export interface ScraperAccount {
+  id: string;
+  email: string;
+  enabled: boolean;
+  note: string | null;
+  /** 密码在库里是否加密存放。false 说明是明文，页面要显式提示风险。 */
+  passwordEncrypted: boolean;
+  lastLoginAt: string | null;
+  /** 最近一次登录体检的结果，null 表示还没体检过。 */
+  lastLoginOk: boolean | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 一次账号登录体检的结果。 */
+export interface AccountCheckResult {
+  ok: boolean;
+  message: string;
+}
+
+export interface JailbreakPromptStats {
+  success: number;
+  partial: number;
+  failed: number;
+}
+
+export interface JailbreakPrompt {
+  id: string;
+  /** 名字同时是抽取记录里的 promptVersion，改名会让历史战绩对不上，所以不允许改。 */
+  name: string;
+  content: string;
+  enabled: boolean;
+  /** 尝试顺序，小的先试。 */
+  sortOrder: number;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** 按抽取记录里的 promptVersion 统计出的历史战绩，用来判断这一版还灵不灵。 */
+  stats: JailbreakPromptStats;
+}
+
+export const JAILBREAK_NAME_MAX = 40;
+export const JAILBREAK_CONTENT_MAX = 20_000;
 
 export interface ApiError {
   error: string;

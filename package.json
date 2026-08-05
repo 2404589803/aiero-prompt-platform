@@ -15,7 +15,8 @@
     "test": "pnpm -r --if-present test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "import:legacy": "pnpm --filter @aiero/server import:legacy"
+    "import:legacy": "pnpm --filter @aiero/server import:legacy",
+    "migrate": "pnpm --filter @aiero/server migrate"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

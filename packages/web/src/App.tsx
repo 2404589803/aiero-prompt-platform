@@ -8,13 +8,34 @@ import { LoginPage } from './pages/LoginPage';
 import { JobConsolePage } from './pages/JobConsolePage';
 import { PromptLibraryPage } from './pages/PromptLibraryPage';
 import { AppsPage } from './pages/AppsPage';
+import { AccountPoolPage } from './pages/AccountPoolPage';
+import { JailbreakPromptPage } from './pages/JailbreakPromptPage';
 
-type ViewKey = 'jobs' | 'prompts' | 'apps';
+type ViewKey = 'jobs' | 'prompts' | 'apps' | 'accounts' | 'jailbreak';
 
-const MENU_ITEMS: Array<{ key: ViewKey; label: string }> = [
-  { key: 'jobs', label: '抓取任务' },
-  { key: 'prompts', label: '提示词库' },
-  { key: 'apps', label: '角色卡' },
+const VIEW_LABEL: Record<ViewKey, string> = {
+  jobs: '抓取任务',
+  prompts: '提示词库',
+  apps: '角色卡',
+  accounts: '账号池',
+  jailbreak: '越狱提示词',
+};
+
+// 抓取配置单独分组：账号和越狱提示词是「设置好就不常动」的东西，
+// 跟每天要看的任务、提示词库混在一列里容易点错。
+const MENU_ITEMS = [
+  { key: 'jobs', label: VIEW_LABEL.jobs },
+  { key: 'prompts', label: VIEW_LABEL.prompts },
+  { key: 'apps', label: VIEW_LABEL.apps },
+  {
+    key: 'config',
+    label: '抓取配置',
+    type: 'group' as const,
+    children: [
+      { key: 'accounts', label: VIEW_LABEL.accounts },
+      { key: 'jailbreak', label: VIEW_LABEL.jailbreak },
+    ],
+  },
 ];
 
 export function AieroApp() {
@@ -81,7 +102,7 @@ export function AieroApp() {
 
       <Layout>
         <Layout.Header className="app-header">
-          <Typography.Text strong>{MENU_ITEMS.find((i) => i.key === view)?.label}</Typography.Text>
+          <Typography.Text strong>{VIEW_LABEL[view]}</Typography.Text>
           <Space>
             <Typography.Text type="secondary">
               {me.data?.displayName ?? me.data?.email ?? session.user.email}
@@ -106,6 +127,8 @@ export function AieroApp() {
               {view === 'jobs' ? <JobConsolePage /> : null}
               {view === 'prompts' ? <PromptLibraryPage /> : null}
               {view === 'apps' ? <AppsPage /> : null}
+              {view === 'accounts' ? <AccountPoolPage /> : null}
+              {view === 'jailbreak' ? <JailbreakPromptPage /> : null}
             </Space>
           )}
         </Layout.Content>

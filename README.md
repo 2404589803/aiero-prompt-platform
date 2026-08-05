@@ -20,18 +20,36 @@
 
 ## 与原脚本的对应关系
 
-| 原来                           | 现在                          |
-| ------------------------------ | ----------------------------- |
-| `queue.jsonl` + `seen_ids.txt` | `aiero.apps`                  |
-| `results.jsonl` + `prompts/*`  | `aiero.extractions`           |
-| `progress.json`                | `aiero.jobs.stats`            |
-| `list_state.json`              | `aiero.list_state`            |
-| `run.log`                      | `aiero.job_logs`              |
-| 进程内 `claimed` 集合去重      | `FOR UPDATE SKIP LOCKED` 领取 |
-| 硬编码账号密码                 | `SCRAPER_ACCOUNTS` 环境变量   |
+| 原来                           | 现在                                    |
+| ------------------------------ | --------------------------------------- |
+| `queue.jsonl` + `seen_ids.txt` | `aiero.apps`                            |
+| `results.jsonl` + `prompts/*`  | `aiero.extractions`                     |
+| `progress.json`                | `aiero.jobs.stats`                      |
+| `list_state.json`              | `aiero.list_state`                      |
+| `run.log`                      | `aiero.job_logs`                        |
+| 进程内 `claimed` 集合去重      | `FOR UPDATE SKIP LOCKED` 领取           |
+| 硬编码账号密码                 | `aiero.accounts`（页面上管理）          |
+| 硬编码三版越狱提示词           | `aiero.jailbreak_prompts`（页面上管理） |
 
-越狱提示词、SSE 解析、账号轮换、限流退避、模型 × 越狱版本矩阵、启发式判定这些
+越狱提示词、SSE 解析、账号轮换、限流退避、模型 × 越狱提示词矩阵、启发式判定这些
 核心逻辑逐条对齐移植，判定阈值没有改动。
+
+## 抓取配置
+
+账号池和越狱提示词都在页面上管理，改完不用重新部署。两者的运行期来源都是数据库，
+环境变量和源码里的常量只在对应的表为空时播种一次：
+
+- **账号池**：`SCRAPER_ACCOUNTS` 只在 `aiero.accounts` 为空时导入一次。密码只写不读，
+  任何接口都不回传，改密码只能整体覆盖。配了 `ACCOUNT_SECRET_KEY` 就用 AES-256-GCM
+  加密存，没配则明文存并在页面上挂警告。账号失效不会让任务报错，只会让它领到的每张卡
+  都抽失败，所以加完账号请点一次「体检」。
+- **越狱提示词**：`packages/server/src/scraper/jailbreak.ts` 里的三版只在
+  `aiero.jailbreak_prompts` 为空时播种。抽取按顺序号从小到大逐个试，任一版套出提示词
+  就收工；提示词的名字会写进抽取记录的 `prompt_version`，页面上据此统计每一版的成功率。
+  名字建好之后不能改，否则历史战绩对不上。
+
+任务启动那一刻会把账号和提示词取好并固定住，跑到一半改配置不影响正在运行的任务——
+否则同一个任务前半段用 A 版、后半段用 B 版，成功率就没法归因了。
 
 ## 本地开发
 
@@ -60,11 +78,11 @@ pnpm import:legacy -- "D:\path\to\aiero_prompt_output"
 
 线上地址：
 
-| 端     | 地址                                              |
-| ------ | ------------------------------------------------- |
-| 前端   | https://aiero-prompt-platform.vercel.app          |
-| 后端   | https://aiero-server-production.up.railway.app    |
-| 数据库 | Supabase 测试项目的 `aiero` schema                |
+| 端     | 地址                                           |
+| ------ | ---------------------------------------------- |
+| 前端   | https://aiero-prompt-platform.vercel.app       |
+| 后端   | https://aiero-server-production.up.railway.app |
+| 数据库 | Supabase 测试项目的 `aiero` schema             |
 
 后端（Railway 项目 `aiero-prompt-platform` / 服务 `aiero-server`）：
 

@@ -33,9 +33,12 @@ function optionalNumber(name: string, fallback: number): number {
 }
 
 /**
- * 站点账号池，JSON 数组格式：
+ * 站点账号池的种子，JSON 数组格式：
  *   SCRAPER_ACCOUNTS=[{"email":"a@b.c","password":"..."}]
  * 用 JSON 而不是逗号分隔，是因为密码里可能带分隔符。
+ *
+ * 账号的实际来源已经是 aiero.accounts 表。这个变量只在表为空时导入一次，
+ * 之后改账号请走平台页面，改环境变量不会有任何效果。
  */
 function parseAccounts(): ScraperAccountConfig[] {
   const raw = process.env.SCRAPER_ACCOUNTS;
@@ -82,8 +85,15 @@ export const config = {
   supabaseUrl: process.env.SUPABASE_URL ?? '',
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? '',
 
-  accounts: parseAccounts(),
+  /** 只作为 aiero.accounts 空表时的一次性种子，不是运行期账号来源。 */
+  seedAccounts: parseAccounts(),
   corsOrigins: parseOrigins(),
+
+  /**
+   * 站点账号密码的加密密钥，随便一串足够长的随机字符即可。
+   * 不配也能跑，但密码会明文进库，页面上会挂提示。
+   */
+  accountSecretKey: process.env.ACCOUNT_SECRET_KEY ?? '',
 
   /**
    * 本地开发时跳过登录校验。生产环境设成 true 等于把平台裸奔在公网上，
@@ -106,8 +116,8 @@ export function assertHttpConfig(): void {
 export function describeConfig(): Record<string, unknown> {
   return {
     port: config.port,
-    accounts: config.accounts.length,
     corsOrigins: config.corsOrigins,
     authDisabled: config.authDisabled,
+    passwordEncryption: config.accountSecretKey ? 'on' : 'off',
   };
 }

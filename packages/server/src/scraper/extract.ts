@@ -1,8 +1,8 @@
-import type { JailbreakVersion, ModelRef } from '@aiero/shared';
+import type { ModelRef } from '@aiero/shared';
 import { CONTINUE_PROMPT, DONE_MARK } from './constants.js';
 import { Account, ScraperSession, TokenExpiredError, sleep } from './client.js';
 import { isRateLimitError, looksLikeRefusal, looksLikeSystemPrompt } from './heuristics.js';
-import { JAILBREAK_PROMPTS } from './jailbreak.js';
+import type { PromptRef } from '../settings/prompts.js';
 
 export interface ExtractTarget {
   appId: string;
@@ -26,7 +26,8 @@ export interface ExtractOutcome {
 
 export interface ExtractOptions {
   models: ModelRef[];
-  jailbreakVersions: JailbreakVersion[];
+  /** 越狱提示词，已按尝试顺序排好，由调用方从库里取。 */
+  jailbreakPrompts: PromptRef[];
   maxRounds: number;
   /** 返回 true 表示任务被要求停止，应尽快收尾退出。 */
   shouldStop?: () => boolean;
@@ -36,7 +37,7 @@ export interface ExtractOptions {
 /**
  * 对一张角色卡做一次完整抽取。
  *
- * 策略是「模型 × 越狱版本」的矩阵：外层换模型，内层换越狱提示词，任一组合成功就收工。
+ * 策略是「模型 × 越狱提示词」的矩阵：外层换模型，内层换提示词，任一组合成功就收工。
  * 单个组合内部最多续写 maxRounds 轮，因为长提示词一次吐不完，要靠续写补齐。
  *
  * 三种收尾：套出完整提示词是 success；模型说完了但内容不像提示词是 partial；
@@ -48,7 +49,7 @@ export async function extractOne(
   target: ExtractTarget,
   options: ExtractOptions
 ): Promise<ExtractOutcome> {
-  const { models, jailbreakVersions, maxRounds, shouldStop, onLog } = options;
+  const { models, jailbreakPrompts, maxRounds, shouldStop, onLog } = options;
   const session = new ScraperSession(account);
   const expectedLength = target.prePromptLength;
 
@@ -69,7 +70,7 @@ export async function extractOne(
   for (const model of models) {
     if (shouldStop?.()) break;
 
-    for (const version of jailbreakVersions) {
+    for (const prompt of jailbreakPrompts) {
       if (shouldStop?.()) break;
       outcome.attempts += 1;
 
@@ -82,7 +83,7 @@ export async function extractOne(
         for (let round = 0; round < maxRounds; round += 1) {
           if (shouldStop?.()) break;
 
-          const query = round === 0 ? JAILBREAK_PROMPTS[version] : CONTINUE_PROMPT;
+          const query = round === 0 ? prompt.content : CONTINUE_PROMPT;
           const chat = await session.sendChat(target.appId, query, conversationId);
           conversationId = chat.conversationId;
           if (chat.answer) parts.push(chat.answer);
@@ -93,7 +94,7 @@ export async function extractOne(
           outcome.modelName = chat.modelName || model.name;
           outcome.outputLength = combined.length;
           outcome.promptText = combined;
-          outcome.promptVersion = version;
+          outcome.promptVersion = prompt.name;
 
           if (looksLikeSystemPrompt(combined, expectedLength)) {
             outcome.status = 'success';
@@ -113,10 +114,10 @@ export async function extractOne(
         }
 
         const message = error instanceof Error ? error.message : String(error);
-        outcome.error = `${model.provider}/${model.name}/${version}: ${message}`;
+        outcome.error = `${model.provider}/${model.name}/${prompt.name}: ${message}`;
         onLog?.(
           'warn',
-          `提取失败 ${target.appId} ${model.provider}/${model.name} ${version}: ${message}`
+          `提取失败 ${target.appId} ${model.provider}/${model.name} ${prompt.name}: ${message}`
         );
 
         if (message.includes('401')) await account.refresh();
