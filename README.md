@@ -58,16 +58,31 @@ pnpm import:legacy -- "D:\path\to\aiero_prompt_output"
 
 ## 部署
 
-后端（Railway）：用 `packages/server/Dockerfile`，从仓库根目录构建。
-环境变量见 `.env.example` 的后端部分。
+线上地址：
 
-前端（Vercel）：
+| 端     | 地址                                              |
+| ------ | ------------------------------------------------- |
+| 前端   | https://aiero-prompt-platform.vercel.app          |
+| 后端   | https://aiero-server-production.up.railway.app    |
+| 数据库 | Supabase 测试项目的 `aiero` schema                |
+
+后端（Railway 项目 `aiero-prompt-platform` / 服务 `aiero-server`）：
+
+```powershell
+railway up --service aiero-server --detach
+```
+
+构建走 `packages/server/Dockerfile`，路径与健康检查配置在根目录 `railway.json`；
+仓库没有接 GitHub 自动部署，改完代码要手动 `railway up`。环境变量见 `.env.example` 的后端部分。
+
+前端（Vercel 项目 `aiero-prompt-platform`）：
 
 ```powershell
 vercel deploy --prod --yes
 ```
 
 构建配置在根目录 `vercel.json`。前端的 `VITE_*` 变量是构建时注入的，改完要重新部署。
+后端的 `CORS_ORIGINS` 锁在前端正式域名上，加自定义域名时要同步改。
 
 ## 注意
 

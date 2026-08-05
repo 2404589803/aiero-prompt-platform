@@ -9,3 +9,4 @@ dist/
 .railway/
 coverage/
 legacy_import/
+.vercel
